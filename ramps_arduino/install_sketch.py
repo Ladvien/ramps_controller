@@ -58,13 +58,13 @@ if __name__ == '__main__':
 
     write_port = ''
     try:
-        write_port = ports[selected_port].split('/')[2]
+        write_port = ports[selected_port].split('/')[2].replace('tty', '')
     except:
         print('Unable to parse port name.')
 
     print(f'Selected port {write_port}')
 
-# os.system('arduino-cli compile -b arduino:avr:mega turn_table.ino')
-command_str = f'arduino-cli upload -p {write_port} --fqbn -v arduino:avr:uno turn_table.ino'
+os.system('arduino-cli compile -b arduino:avr:mega ramps_sketch')
+command_str = f'arduino-cli upload -p {write_port} --fqbn arduino:avr:mega ramps_sketch'
 print(command_str)
 os.system(command_str)
