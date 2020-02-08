@@ -32,8 +32,6 @@ from time import sleep, time
 
 class RAMPS:
     
-    
-    
     DRIVE_CMD       = 0x01
     HALT_CMD        = 0x0F
     DIR_CC          = 0x00
@@ -43,8 +41,10 @@ class RAMPS:
     END_TX          = 0x0A
     ACKNOWLEDGE     = 0x06
     NEG_ACKNOWLEDGE = 0x15
+
+    SUCCESS         = 0x06
+    FAIL            = 0x15
         
-    
     MOTOR_X         = 0x01
     MOTOR_Y         = 0x02
     MOTOR_Z         = 0x03

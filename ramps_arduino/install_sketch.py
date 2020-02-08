@@ -1,3 +1,6 @@
+#!/usr/bin/python3
+
+# https://github.com/arduino/arduino-cli#how-to-install
 import os
 import sys
 import glob

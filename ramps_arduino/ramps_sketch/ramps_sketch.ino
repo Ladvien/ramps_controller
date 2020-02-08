@@ -1,6 +1,6 @@
 #include <avr/interrupt.h> 
 #include <avr/io.h> 
-
+#include "pins.h"
 
 
 // https://reprap.org/mediawiki/images/f/f6/RAMPS1.4schematic.png
@@ -12,59 +12,6 @@
 //       And keep motor enabled until threshold has been met.
 // TODO: Handle 0x0A values as part of packet (e.g., if MILLI_BETWEEN = 10).
 // TODO: Add a "holding torque" feature; making it so motors never disable.
-
-// For RAMPS 1.4
-#define X_STEP_PIN         54
-#define X_DIR_PIN          55
-#define X_ENABLE_PIN       38
-#define X_MIN_PIN           3
-#define X_MAX_PIN           2
-
-#define Y_STEP_PIN         60
-#define Y_DIR_PIN          61
-#define Y_ENABLE_PIN       56
-#define Y_MIN_PIN          14
-#define Y_MAX_PIN          15
-
-#define Z_STEP_PIN         46
-#define Z_DIR_PIN          48
-#define Z_ENABLE_PIN       62
-#define Z_MIN_PIN          18
-#define Z_MAX_PIN          19
-
-#define E_STEP_PIN         26
-#define E_DIR_PIN          28
-#define E_ENABLE_PIN       24
-
-#define SDPOWER            -1
-#define SDSS               53
-#define LED_PIN            13
-
-#define FAN_PIN            9
-
-#define PS_ON_PIN          12
-#define KILL_PIN           -1
-
-#define HEATER_0_PIN       10
-#define HEATER_1_PIN       8
-#define TEMP_0_PIN         13   // ANALOG NUMBERING
-#define TEMP_1_PIN         14   // ANALOG NUMBERING
-
-#define MOTOR_X         0x01
-#define MOTOR_Y         0x02
-#define MOTOR_Z         0x03
-#define MOTOR_E1        0x04
-#define MOTOR_E2        0x05
-
-#define DRIVE_CMD       (char)0x01
-#define HALT_CMD        (char)0x0F
-#define DIR_CC          (char)0x00
-#define DIR_CCW         (char)0x01
-
-#define COMPLETED_CMD   (char)0x07
-#define END_TX          (char)0x0A
-#define ACK             (char)0x06 // Acknowledge
-#define NACK            (char)0x15 // Negative Acknowledge
 
 
 // Determine the pulse width of motor.
@@ -78,8 +25,8 @@
       X     = 0
       Y     = 1
       Z     = 2
-      E1    = 3
-      E2    = 4
+      E0    = 3
+      E1    = 4
       
   PACKET_TYPES
       0x01 = motor_write
@@ -98,6 +45,20 @@
   HALT         = 0x0F
 */
 
+/*
+                          0         1         2     0
+  COMPLETED_PACKET = PACKET_TYPE SUCCESS MOTOR_NUM \n
+                         0x01               
+  PACKET_TYPES:
+    MOTOR_FINISHED = 0x01
+
+  SUCCESS_TYPES:
+    SUCCESS = 0x06
+    FAIL    = 0x15
+
+  Types not motor related, MOTOR_NUM = 0.
+/*
+
 
 /* Create a structure for the motors
  *  direction_pin = pin to control direction of stepper.
@@ -111,11 +72,24 @@ struct MOTOR {
   uint8_t pulse_width_micros;
 };
 
+/* Create a structure for the motors' state.
+ *  direction         = the direction the motor should travel.
+ *  distance          = distance left to travel.
+ *  milli_between     = the delay between on-off toggle.
+ *  next_toggle_index = number of delays before toggling.
+ */
+struct MOTOR_STATE {
+  uint8_t direction;
+  uint8_t distance;
+  uint8_t milli_between;
+  uint8_t next_toggle_index;
+};
+
 struct BUFFER {
   uint8_t data[RX_BUFFER_SIZE];
   uint8_t bufferSize;
   uint8_t index;
-  boolean packetComplete;
+  bool packetComplete;
   uint8_t shutdownThreshold;
 };
 
@@ -127,8 +101,42 @@ MOTOR motorX = {
       PULSE_WIDTH_MICROS
 };
 
+MOTOR motorY = {
+      Y_DIR_PIN,
+      Y_STEP_PIN,
+      Y_ENABLE_PIN,
+      PULSE_WIDTH_MICROS
+};
+
+MOTOR motorZ = {
+      Z_DIR_PIN,
+      Z_STEP_PIN,
+      Z_ENABLE_PIN,
+      PULSE_WIDTH_MICROS
+};
+
+MOTOR motorE0 = {
+      E0_DIR_PIN,
+      E0_STEP_PIN,
+      E0_ENABLE_PIN,
+      PULSE_WIDTH_MICROS
+};
+
+MOTOR motorE1 = {
+      X_DIR_PIN,
+      X_STEP_PIN,
+      X_ENABLE_PIN,
+      PULSE_WIDTH_MICROS
+};
+
+MOTOR_STATE motorXState = { DIR_CC, 0, 0, 0 };
+MOTOR_STATE motorYState = { DIR_CC, 0, 0, 0 };
+MOTOR_STATE motorZState = { DIR_CC, 0, 0, 0 };
+MOTOR_STATE motorE0State = { DIR_CC, 0, 0, 0 };
+MOTOR_STATE motorE1State  = { DIR_CC, 0, 0, 0 };
+
 // Urgent shutdown.
-volatile boolean halt = false;
+volatile bool halt = false;
 volatile static bool triggered;
 
 /* Initialize RX buffer */
@@ -143,75 +151,131 @@ void setup()
   
   // Initialize the structures
   motorSetup(motorX);
-  rxBuffer.bufferSize = RX_BUFFER_SIZE;
-
+  motorSetup(motorY);
+  motorSetup(motorZ);
+  motorSetup(motorE0);
+  motorSetup(motorE1);
+  
   // Disable holding torque.
   digitalWrite(motorX.enable_pin, HIGH);
+  digitalWrite(motorY.enable_pin, HIGH);
+  digitalWrite(motorZ.enable_pin, HIGH);
+  digitalWrite(motorE0.enable_pin, HIGH);
+  digitalWrite(motorE1.enable_pin, HIGH);
+  
+  rxBuffer.bufferSize = RX_BUFFER_SIZE;
 }
 
 /* Main */
 void loop()
 {
-  // If packet is packetComplete
   if (rxBuffer.packetComplete) {
+    // If packet is packetComplete
+    handleCompletePacket(rxBuffer);
+    // Clear the buffer for the next packet.
+    resetBuffer(&rxBuffer);
+  }
+  
+  // Start the motor
+  // writeMotor();
+}
+
+/*  ############### PACKETS ###############
+ * 
+*/
+void handleCompletePacket(BUFFER rxBuffer) {
     
     uint8_t packet_type = rxBuffer.data[0];
 
     switch (packet_type) {
       case DRIVE_CMD:
-        {
           // Unpack the command.
           uint8_t motorNumber =  rxBuffer.data[1];
           uint8_t direction =  rxBuffer.data[2];
           uint16_t steps = ((uint8_t)rxBuffer.data[3] << 8)  | (uint8_t)rxBuffer.data[4];
           uint8_t milliSecondsDelay = rxBuffer.data[5];
 
+          Serial.println('Received');
+
+          // Set motor state.
+          setMotorState(motorNumber, direction, steps, milliSecondsDelay);
+
           // Let the master know command is in process.
           sendAck();
-  
-          // Start the motor
-          writeMotor(motorX, direction, steps, milliSecondsDelay);
-        }
         break;
       default:
         sendNack();
         break;
     }
-    // Clear the buffer for the nexgt packet.
-    resetBuffer(&rxBuffer);
-  }
-}
-
-
-void greetings() {
-  Serial.println("RAMPs 1.4 stepper driver.");
-  Serial.println("  MOTOR_NUM:");
-  Serial.println("      X     = 0");
-  Serial.println("      Y     = 1");
-  Serial.println("      Z     = 2");
-  Serial.println("      E1    = 3");
-  Serial.println("      E2    = 4");
-  Serial.println("      ");
-  Serial.println("  PACKET_TYPES");
-  Serial.println("      0x01 = motor_write");
-  Serial.println("");
-  Serial.println("  DIRECTION");
-  Serial.println("      0x00 = CW");
-  Serial.println("      0x01 = CCW");
-  Serial.println("");
-  Serial.println("  MOTOR MOVE PROTOCOL:");
-  Serial.println("                       0               1     2     3        4       5         6");
-  Serial.println("  MOTOR_PACKET = PACKET_TYPE_CHAR MOTOR_NUM DIR STEPS_1 STEPS_2 MILLI_BETWEEN \\n");
-  Serial.println("  MOTOR_PACKET =    01                01    00    03     E8        05         0A");
-  Serial.println("  MOTOR_PACKET =    0x 01010003E8050A");
-  Serial.println("");
-  Serial.println("  HALT         = 0x0F");
 }
 
 
 /*  ############### MOTORS ###############
  * 
 */
+
+MOTOR getMotor(uint8_t motorNumber) {
+  switch (motorNumber)
+  {
+    case MOTOR_X:
+      return motorX;
+      break;
+    case MOTOR_Y:
+      return motorY;
+      break;
+    case MOTOR_Z:
+      return motorZ;
+      break;
+    case MOTOR_E0:
+      return motorE0;
+      break;
+    case MOTOR_E1:
+      return motorE0;
+      break;
+    default:
+      break;
+  }
+}
+
+MOTOR_STATE* getMotorState(uint8_t motorNumber) {
+  switch (motorNumber)
+  {
+    case MOTOR_X:
+      return &motorXState;
+      break;
+    case MOTOR_Y:
+      return &motorYState;
+      break;
+    case MOTOR_Z:
+      return &motorZState;
+      break;
+    case MOTOR_E0:
+      return &motorE0State;
+      break;
+    case MOTOR_E1:
+      return &motorE0State;
+      break;
+    default:
+      break;
+  }
+}
+
+void setMotorState(uint8_t motorNumber, uint8_t direction, uint16_t steps, uint8_t milliSecondsDelay) {
+
+    MOTOR_STATE* motorState = getMotorState(motorNumber);
+    motorState->direction = direction;
+    motorState->distance = direction;
+    motorState->milli_between = milliSecondsDelay;
+
+    // Always tart toggle index at 0.
+    motorState->next_toggle_index = 0;
+
+    Serial.print("Setup motor: ");
+    // Serial.print("")
+    // Serial.println(motorState.distance)
+}
+
+
 
 /* Method for initalizing MOTOR */
 void motorSetup(MOTOR motor) {
@@ -220,7 +284,6 @@ void motorSetup(MOTOR motor) {
   pinMode(motor.direction_pin, OUTPUT);
   pinMode(motor.step_pin, OUTPUT);
   pinMode(motor.enable_pin, OUTPUT);
-
 }
 
 /* Write to MOTOR */
@@ -228,19 +291,6 @@ void writeMotor(MOTOR motor, int direction, uint16_t numberOfSteps, int milliBet
 
     // Enable motor.
     digitalWrite(motor.enable_pin, LOW);
-
-    // Check direction;
-    switch (direction) {
-      case DIR_CC:
-        digitalWrite(motor.direction_pin, HIGH);
-        break;
-      case DIR_CCW:
-        digitalWrite(motor.direction_pin, LOW);
-        break;
-      default:
-        sendNack();
-        return;
-    }
 
     // Move the motor (but keep an eye for a halt command)
     for(int n = 0; n < numberOfSteps; n++) {
@@ -260,6 +310,22 @@ void writeMotor(MOTOR motor, int direction, uint16_t numberOfSteps, int milliBet
 
     // Let the user know the move is done.
     sendCompletedAction();
+}
+
+void setDirection(MOTOR motor, uint8_t direction) {
+
+    // Check direction;
+    switch (direction) {
+      case DIR_CC:
+        digitalWrite(motor.direction_pin, HIGH);
+        break;
+      case DIR_CCW:
+        digitalWrite(motor.direction_pin, LOW);
+        break;
+      default:
+        sendNack();
+        return;
+    }
 }
 
 // END MOTORS
@@ -329,4 +395,29 @@ boolean checkForHalt() {
   return false;
 }
 
+void greetings() {
+  Serial.println("RAMPs 1.4 stepper driver.");
+  Serial.println("  MOTOR_NUM:");
+  Serial.println("      X     = 0");
+  Serial.println("      Y     = 1");
+  Serial.println("      Z     = 2");
+  Serial.println("      E1    = 3");
+  Serial.println("      E2    = 4");
+  Serial.println("      ");
+  Serial.println("  PACKET_TYPES");
+  Serial.println("      0x01 = motor_write");
+  Serial.println("");
+  Serial.println("  DIRECTION");
+  Serial.println("      0x00 = CW");
+  Serial.println("      0x01 = CCW");
+  Serial.println("");
+  Serial.println("  MOTOR MOVE PROTOCOL:");
+  Serial.println("                       0               1     2     3        4       5         6");
+  Serial.println("  MOTOR_PACKET = PACKET_TYPE_CHAR MOTOR_NUM DIR STEPS_1 STEPS_2 MILLI_BETWEEN \\n");
+  Serial.println("  MOTOR_PACKET =    01                01    00    03     E8        05         0A");
+  Serial.println("  MOTOR_PACKET =    0x 01010003E8050A");
+  Serial.println("");
+  Serial.println("  HALT         = 0x0F");
+}
 // END COMMUNICATION
+
