@@ -67,7 +67,7 @@ if __name__ == '__main__':
 
     print(f'Selected port {write_port}')
 
-os.system('arduino-cli compile -b arduino:avr:mega ramps_sketch')
-command_str = f'arduino-cli -v upload -p {write_port} --fqbn arduino:avr:mega ramps_sketch'
-print(command_str)
-os.system(command_str)
+    os.system('arduino-cli compile -b arduino:avr:mega ramps_sketch')
+    command_str = f'arduino-cli -v upload -p {write_port} --fqbn arduino:avr:mega ramps_sketch'
+    print(command_str)
+    os.system(command_str)

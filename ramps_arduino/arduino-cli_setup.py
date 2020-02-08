@@ -10,4 +10,5 @@ os.system('arduino-cli config init')
 os.system('arduino-cli core update-index')
 
 # Add Arduino Mega core.
+os.system('arduino-cli core install arduino:avr')
 os.system('arduino-cli core install arduino:megaavr')

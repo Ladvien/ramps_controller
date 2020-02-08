@@ -80,9 +80,9 @@ struct MOTOR {
  */
 struct MOTOR_STATE {
   uint8_t direction;
-  uint8_t distance;
+  uint8_t steps;
   uint8_t milli_between;
-  uint8_t next_toggle_index;
+  uint8_t delay_cursor;
 };
 
 struct BUFFER {
@@ -135,6 +135,9 @@ MOTOR_STATE motorZState = { DIR_CC, 0, 0, 0 };
 MOTOR_STATE motorE0State = { DIR_CC, 0, 0, 0 };
 MOTOR_STATE motorE1State  = { DIR_CC, 0, 0, 0 };
 
+// All motors.
+int allMotors[] = { MOTOR_X, MOTOR_Y, MOTOR_Z, MOTOR_E0, MOTOR_E1 };
+
 // Urgent shutdown.
 volatile bool halt = false;
 volatile static bool triggered;
@@ -177,7 +180,7 @@ void loop()
   }
   
   // Start the motor
-  // writeMotor();
+  writeMotor();
 }
 
 /*  ############### PACKETS ###############
@@ -189,13 +192,12 @@ void handleCompletePacket(BUFFER rxBuffer) {
 
     switch (packet_type) {
       case DRIVE_CMD:
+
           // Unpack the command.
           uint8_t motorNumber =  rxBuffer.data[1];
           uint8_t direction =  rxBuffer.data[2];
           uint16_t steps = ((uint8_t)rxBuffer.data[3] << 8)  | (uint8_t)rxBuffer.data[4];
           uint8_t milliSecondsDelay = rxBuffer.data[5];
-
-          Serial.println('Received');
 
           // Set motor state.
           setMotorState(motorNumber, direction, steps, milliSecondsDelay);
@@ -262,17 +264,14 @@ MOTOR_STATE* getMotorState(uint8_t motorNumber) {
 
 void setMotorState(uint8_t motorNumber, uint8_t direction, uint16_t steps, uint8_t milliSecondsDelay) {
 
+    // Get reference to motor state.
     MOTOR_STATE* motorState = getMotorState(motorNumber);
+
+    // Update with target states.
     motorState->direction = direction;
-    motorState->distance = direction;
+    motorState->steps = steps;
     motorState->milli_between = milliSecondsDelay;
-
-    // Always tart toggle index at 0.
-    motorState->next_toggle_index = 0;
-
-    Serial.print("Setup motor: ");
-    // Serial.print("")
-    // Serial.println(motorState.distance)
+    motorState->delay_cursor = 0;
 }
 
 
@@ -287,29 +286,55 @@ void motorSetup(MOTOR motor) {
 }
 
 /* Write to MOTOR */
-void writeMotor(MOTOR motor, int direction, uint16_t numberOfSteps, int milliBetweenSteps) {
+void writeMotor() {
 
-    // Enable motor.
-    digitalWrite(motor.enable_pin, LOW);
+    // Loop over all motors.
 
-    // Move the motor (but keep an eye for a halt command)
-    for(int n = 0; n < numberOfSteps; n++) {
-      // Interrupt motor
-      if(checkForHalt()) {  
-        sendAck();
-        break; 
+    for (int i = 0; i < int(sizeof(allMotors)/sizeof(int)); i++)
+    {
+      
+      Serial.print("Motor #: ");
+      Serial.print("0x");
+      Serial.println(allMotors[i], HEX);
+
+      // Get motor and motorState for this motor.
+      MOTOR motor = getMotor(allMotors[i]);
+      MOTOR_STATE* motorState = getMotorState(allMotors[i]);
+
+      // Check if motor needs to move.
+      if (motorState->steps > 0) {
+        // If delay expired, write step.
+        if (motorState->delay_cursor > motorState->milli_between) {
+            // Reset motor's delay.
+            motorState->delay_cursor = 0;
+            writeMotor(motor);
+            motorState->steps -= 1;
+        }        
       }
-      digitalWrite(motor.step_pin, HIGH);
-      delayMicroseconds(motor.pulse_width_micros);
-      digitalWrite(motor.step_pin, LOW);
-      delay(milliBetweenSteps);
+
+      // Update delay cursor.
+      motorState->delay_cursor += 1;
     }
 
+    // Delay for all motors.
+    delay(1);
+}
+
+void writeMotor(MOTOR motor) {
+    Serial.println("Wrote motor");
+    digitalWrite(motor.step_pin, HIGH);
+    delayMicroseconds(motor.pulse_width_micros);
+    digitalWrite(motor.step_pin, LOW);
+}
+
+void enableMotor(MOTOR motor) {
+    // Enable motor.
+    digitalWrite(motor.enable_pin, LOW);
+}
+
+void disableMotor(MOTOR motor) {
     // Disable holding torque.
     digitalWrite(motor.enable_pin, HIGH);
-
-    // Let the user know the move is done.
-    sendCompletedAction();
 }
 
 void setDirection(MOTOR motor, uint8_t direction) {
