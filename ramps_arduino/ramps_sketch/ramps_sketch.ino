@@ -6,19 +6,21 @@
 // https://reprap.org/mediawiki/images/f/f6/RAMPS1.4schematic.png
 // https://reprap.org/forum/read.php?219,168722
 
+// TODO: Remove unneeded "MOTOR_NUM", use packet index to determine motor.
 // TODO: Pulse width set by initialization.
-// TODO: Setup all motors to be selected by master.
 // TODO: Add a timer to shutdown motors after threshold.
 //       And keep motor enabled until threshold has been met.
-// TODO: Handle 0x0A values as part of packet (e.g., if MILLI_BETWEEN = 10).
 // TODO: Add a "holding torque" feature; making it so motors never disable.
 
 
 // Determine the pulse width of motor.
 #define MOTOR_ANGLE           1.8
 #define PULSE_WIDTH_MICROS    360 / MOTOR_ANGLE
+#define NUM_MOTORS            5
+#define PACKET_LENGTH         6
+#define RX_BUFFER_SIZE        NUM_MOTORS * PACKET_LENGTH
+#define PACKAGE_SIZE          NUM_MOTORS * PACKET_LENGTH
 
-#define RX_BUFFER_SIZE 16
 
 /*
   MOTOR_NUM:
@@ -37,12 +39,16 @@
       0x01 = CCW
 
   MOTOR MOVE PROTOCOL:
-                       0               1     2     3        4       5         6
-  MOTOR_PACKET = PACKET_TYPE_CHAR MOTOR_NUM DIR STEPS_1 STEPS_2 MILLI_BETWEEN \n
-  MOTOR_PACKET =    01                01    00    03     E8        05         0A
+                       0               1     2     3        4       5        
+  MOTOR_PACKET = PACKET_TYPE_CHAR MOTOR_NUM DIR STEPS_1 STEPS_2 MILLI_BETWEEN
+  MOTOR_PACKET =    01                01    00    03     E8        05        
   MOTOR_PACKET =    0x 01010003E8050A
 
   HALT         = 0x0F
+
+  PACKAGE = PACKET1 PACKET2 PACKET3 PACKET4 PACKET5
+  
+  PACKAGE_EXAMPLE = 01 01 00 FF E8 01 01 02 00 FF E8 01 01 02 00 FF E8 01 01 02 00 FF E8 01 01 02 00 FF E8 01
 */
 
 /*
@@ -83,6 +89,7 @@ struct MOTOR_STATE {
   uint8_t steps;
   uint8_t milli_between;
   uint8_t delay_cursor;
+  bool enabled;
 };
 
 struct BUFFER {
@@ -129,11 +136,11 @@ MOTOR motorE1 = {
       PULSE_WIDTH_MICROS
 };
 
-MOTOR_STATE motorXState = { DIR_CC, 0, 0, 0 };
-MOTOR_STATE motorYState = { DIR_CC, 0, 0, 0 };
-MOTOR_STATE motorZState = { DIR_CC, 0, 0, 0 };
-MOTOR_STATE motorE0State = { DIR_CC, 0, 0, 0 };
-MOTOR_STATE motorE1State  = { DIR_CC, 0, 0, 0 };
+MOTOR_STATE motorXState = { DIR_CC, 0, 0, 0, false };
+MOTOR_STATE motorYState = { DIR_CC, 0, 0, 0, false };
+MOTOR_STATE motorZState = { DIR_CC, 0, 0, 0, false };
+MOTOR_STATE motorE0State = { DIR_CC, 0, 0, 0, false };
+MOTOR_STATE motorE1State  = { DIR_CC, 0, 0, 0, false };
 
 // All motors.
 int allMotors[] = { MOTOR_X, MOTOR_Y, MOTOR_Z, MOTOR_E0, MOTOR_E1 };
@@ -188,26 +195,36 @@ void loop()
 */
 void handleCompletePacket(BUFFER rxBuffer) {
     
-    uint8_t packet_type = rxBuffer.data[0];
+    int packetProcessingIndex = 0;
+    
+    for (int i = 0; i < RX_BUFFER_SIZE; i+=PACKET_LENGTH)
+    {
+      uint8_t packet_type = rxBuffer.data[0];
+      
+      switch (packet_type) {
+        case DRIVE_CMD:
 
-    switch (packet_type) {
-      case DRIVE_CMD:
-
-          // Unpack the command.
-          uint8_t motorNumber =  rxBuffer.data[1];
-          uint8_t direction =  rxBuffer.data[2];
-          uint16_t steps = ((uint8_t)rxBuffer.data[3] << 8)  | (uint8_t)rxBuffer.data[4];
-          uint8_t milliSecondsDelay = rxBuffer.data[5];
-
-          // Set motor state.
-          setMotorState(motorNumber, direction, steps, milliSecondsDelay);
-
-          // Let the master know command is in process.
-          sendAck();
-        break;
-      default:
-        sendNack();
-        break;
+            // Unpack the command.
+            uint8_t motorNumber =  rxBuffer.data[i+1];
+            uint8_t direction =  rxBuffer.data[i+2];
+            uint16_t steps = ((uint8_t)rxBuffer.data[i+3] << 8)  | (uint8_t)rxBuffer.data[i+4];
+            uint8_t milliSecondsDelay = rxBuffer.data[i+5];
+            
+            // Should we move this motor.
+            if (steps > 0) {
+              // Set motor state.
+              Serial.print("Motor number #");
+              Serial.println(motorNumber);
+              setMotorState(motorNumber, direction, steps, milliSecondsDelay);
+            }
+            
+            // Let the master know command is in process.
+            sendAck();
+          break;
+        default:
+          sendNack();
+          break;
+      }
     }
 }
 
@@ -274,7 +291,13 @@ void setMotorState(uint8_t motorNumber, uint8_t direction, uint16_t steps, uint8
     motorState->delay_cursor = 0;
 }
 
-
+void resetMotorState(MOTOR_STATE* motorState){
+  motorState->direction = DIR_CC;
+  motorState->steps = 0;
+  motorState->milli_between = 0;
+  motorState->delay_cursor = 0;
+  motorState->enabled = false;
+}
 
 /* Method for initalizing MOTOR */
 void motorSetup(MOTOR motor) {
@@ -292,10 +315,6 @@ void writeMotor() {
 
     for (int i = 0; i < int(sizeof(allMotors)/sizeof(int)); i++)
     {
-      
-      Serial.print("Motor #: ");
-      Serial.print("0x");
-      Serial.println(allMotors[i], HEX);
 
       // Get motor and motorState for this motor.
       MOTOR motor = getMotor(allMotors[i]);
@@ -303,6 +322,12 @@ void writeMotor() {
 
       // Check if motor needs to move.
       if (motorState->steps > 0) {
+        
+        // Enable motor.
+        if (motorState->enabled == false) {
+          enableMotor(motor, motorState);
+        }
+
         // If delay expired, write step.
         if (motorState->delay_cursor > motorState->milli_between) {
             // Reset motor's delay.
@@ -314,6 +339,11 @@ void writeMotor() {
 
       // Update delay cursor.
       motorState->delay_cursor += 1;
+      if (motorState->steps == 0 && motorState->enabled == true ) {
+        Serial.println("Disabled motor");
+        disableMotor(motor, motorState);
+        resetMotorState(motorState);
+      }
     }
 
     // Delay for all motors.
@@ -322,19 +352,25 @@ void writeMotor() {
 
 void writeMotor(MOTOR motor) {
     Serial.println("Wrote motor");
+    Serial.print("Step pin: ");
+    Serial.println(motor.step_pin);
+    Serial.print("Delay miroseconds: ");
+    Serial.println(motor.pulse_width_micros);
     digitalWrite(motor.step_pin, HIGH);
     delayMicroseconds(motor.pulse_width_micros);
     digitalWrite(motor.step_pin, LOW);
 }
 
-void enableMotor(MOTOR motor) {
+void enableMotor(MOTOR motor, MOTOR_STATE* motor_state) {
     // Enable motor.
     digitalWrite(motor.enable_pin, LOW);
+    motor_state->enabled = true;
 }
 
-void disableMotor(MOTOR motor) {
+void disableMotor(MOTOR motor, MOTOR_STATE* motor_state) {
     // Disable holding torque.
     digitalWrite(motor.enable_pin, HIGH);
+    motor_state->enabled = false;
 }
 
 void setDirection(MOTOR motor, uint8_t direction) {
@@ -370,12 +406,9 @@ void serialEvent() {
     rxBuffer.data[rxBuffer.index] = inByte;
     rxBuffer.index++;
 
-    // If a complete packet character is found, mark the packet
-    // as ready for execution.
-    if ((char)inByte == '\n') {
+    if (rxBuffer.index == PACKAGE_SIZE) {
       rxBuffer.packetComplete = true;
     }
-    
   }
 }
 
