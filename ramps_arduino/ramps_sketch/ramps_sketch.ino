@@ -40,7 +40,7 @@
 
   MOTOR MOVE PROTOCOL:
                        0               1     2     3        4       5        
-  MOTOR_PACKET = PACKET_TYPE_CHAR MOTOR_NUM DIR STEPS_1 STEPS_2 MILLI_BETWEEN
+  MOTOR_PACKET = PACKET_TYPE_CHAR MOTOR_NUM DIR STEPS_1 STEPS_2 MICROSECONDS_BETWEEN
   MOTOR_PACKET =    01                01    00    03     E8        05        
   MOTOR_PACKET =    0x 01010003E8050A
 
@@ -81,13 +81,13 @@ struct MOTOR {
 /* Create a structure for the motors' state.
  *  direction         = the direction the motor should travel.
  *  distance          = distance left to travel.
- *  milli_between     = the delay between on-off toggle.
+ *  micro_between     = the delay between on-off toggle.
  *  next_toggle_index = number of delays before toggling.
  */
 struct MOTOR_STATE {
   uint8_t direction;
   uint8_t steps;
-  uint8_t milli_between;
+  uint8_t micro_between;
   uint8_t delay_cursor;
   bool enabled;
 };
@@ -208,14 +208,14 @@ void handleCompletePacket(BUFFER rxBuffer) {
             uint8_t motorNumber =  rxBuffer.data[i+1];
             uint8_t direction =  rxBuffer.data[i+2];
             uint16_t steps = ((uint8_t)rxBuffer.data[i+3] << 8)  | (uint8_t)rxBuffer.data[i+4];
-            uint8_t milliSecondsDelay = rxBuffer.data[i+5];
+            uint8_t microSecondsDelay = rxBuffer.data[i+5];
             
             // Should we move this motor.
             if (steps > 0) {
               // Set motor state.
               Serial.print("Motor number #");
               Serial.println(motorNumber);
-              setMotorState(motorNumber, direction, steps, milliSecondsDelay);
+              setMotorState(motorNumber, direction, steps, microSecondsDelay);
             }
             
             // Let the master know command is in process.
@@ -279,7 +279,7 @@ MOTOR_STATE* getMotorState(uint8_t motorNumber) {
   }
 }
 
-void setMotorState(uint8_t motorNumber, uint8_t direction, uint16_t steps, uint8_t milliSecondsDelay) {
+void setMotorState(uint8_t motorNumber, uint8_t direction, uint16_t steps, uint8_t microSecondsDelay) {
 
     // Get reference to motor state.
     MOTOR_STATE* motorState = getMotorState(motorNumber);
@@ -287,14 +287,14 @@ void setMotorState(uint8_t motorNumber, uint8_t direction, uint16_t steps, uint8
     // Update with target states.
     motorState->direction = direction;
     motorState->steps = steps;
-    motorState->milli_between = milliSecondsDelay;
+    motorState->micro_between = microSecondsDelay;
     motorState->delay_cursor = 0;
 }
 
 void resetMotorState(MOTOR_STATE* motorState){
   motorState->direction = DIR_CC;
   motorState->steps = 0;
-  motorState->milli_between = 0;
+  motorState->micro_between = 0;
   motorState->delay_cursor = 0;
   motorState->enabled = false;
 }
@@ -312,7 +312,6 @@ void motorSetup(MOTOR motor) {
 void writeMotor() {
 
     // Loop over all motors.
-
     for (int i = 0; i < int(sizeof(allMotors)/sizeof(int)); i++)
     {
 
@@ -328,8 +327,11 @@ void writeMotor() {
           enableMotor(motor, motorState);
         }
 
+        // Set motor direction.
+        setDirection(motor, motorState->direction);
+
         // If delay expired, write step.
-        if (motorState->delay_cursor > motorState->milli_between) {
+        if (motorState->delay_cursor > motorState->micro_between) {
             // Reset motor's delay.
             motorState->delay_cursor = 0;
             writeMotor(motor);
@@ -339,6 +341,8 @@ void writeMotor() {
 
       // Update delay cursor.
       motorState->delay_cursor += 1;
+
+      // If steps are finished, disable motor and reset state.
       if (motorState->steps == 0 && motorState->enabled == true ) {
         Serial.println("Disabled motor");
         disableMotor(motor, motorState);
@@ -347,15 +351,10 @@ void writeMotor() {
     }
 
     // Delay for all motors.
-    delay(1);
+    delayMicroseconds(1);
 }
 
 void writeMotor(MOTOR motor) {
-    Serial.println("Wrote motor");
-    Serial.print("Step pin: ");
-    Serial.println(motor.step_pin);
-    Serial.print("Delay miroseconds: ");
-    Serial.println(motor.pulse_width_micros);
     digitalWrite(motor.step_pin, HIGH);
     delayMicroseconds(motor.pulse_width_micros);
     digitalWrite(motor.step_pin, LOW);
@@ -374,7 +373,6 @@ void disableMotor(MOTOR motor, MOTOR_STATE* motor_state) {
 }
 
 void setDirection(MOTOR motor, uint8_t direction) {
-
     // Check direction;
     switch (direction) {
       case DIR_CC:
@@ -455,27 +453,7 @@ boolean checkForHalt() {
 
 void greetings() {
   Serial.println("RAMPs 1.4 stepper driver.");
-  Serial.println("  MOTOR_NUM:");
-  Serial.println("      X     = 0");
-  Serial.println("      Y     = 1");
-  Serial.println("      Z     = 2");
-  Serial.println("      E1    = 3");
-  Serial.println("      E2    = 4");
-  Serial.println("      ");
-  Serial.println("  PACKET_TYPES");
-  Serial.println("      0x01 = motor_write");
-  Serial.println("");
-  Serial.println("  DIRECTION");
-  Serial.println("      0x00 = CW");
-  Serial.println("      0x01 = CCW");
-  Serial.println("");
-  Serial.println("  MOTOR MOVE PROTOCOL:");
-  Serial.println("                       0               1     2     3        4       5         6");
-  Serial.println("  MOTOR_PACKET = PACKET_TYPE_CHAR MOTOR_NUM DIR STEPS_1 STEPS_2 MILLI_BETWEEN \\n");
-  Serial.println("  MOTOR_PACKET =    01                01    00    03     E8        05         0A");
-  Serial.println("  MOTOR_PACKET =    0x 01010003E8050A");
-  Serial.println("");
-  Serial.println("  HALT         = 0x0F");
+  Serial.println("Welcome!");
 }
 // END COMMUNICATION
 
