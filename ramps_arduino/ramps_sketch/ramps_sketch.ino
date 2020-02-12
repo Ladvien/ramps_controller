@@ -5,22 +5,28 @@
 
 // https://reprap.org/mediawiki/images/f/f6/RAMPS1.4schematic.png
 // https://reprap.org/forum/read.php?219,168722
+// https://google.github.io/styleguide/cppguide.html
 
+// TODO: Modify motor steps to be in delay window.
 // TODO: Remove unneeded "MOTOR_NUM", use packet index to determine motor.
 // TODO: Pulse width set by initialization.
 // TODO: Add a timer to shutdown motors after threshold.
 //       And keep motor enabled until threshold has been met.
 // TODO: Add a "holding torque" feature; making it so motors never disable.
 
+// Output debug info?
+#define DEBUG                 false
 
 // Determine the pulse width of motor.
 #define MOTOR_ANGLE           1.8
 #define PULSE_WIDTH_MICROS    360 / MOTOR_ANGLE
 #define NUM_MOTORS            5
-#define PACKET_LENGTH         6
+#define PACKET_LENGTH         5
 #define RX_BUFFER_SIZE        NUM_MOTORS * PACKET_LENGTH
 #define PACKAGE_SIZE          NUM_MOTORS * PACKET_LENGTH
-
+#define STEP_WINDOW           10 // Number of microsecond variance allowed per step.
+#define SENTINEL              0
+#define MINIMUM_STEPPER_DELAY 2000
 
 /*
   MOTOR_NUM:
@@ -39,16 +45,16 @@
       0x01 = CCW
 
   MOTOR MOVE PROTOCOL:
-                       0               1     2     3        4       5        
-  MOTOR_PACKET = PACKET_TYPE_CHAR MOTOR_NUM DIR STEPS_1 STEPS_2 MICROSECONDS_BETWEEN
-  MOTOR_PACKET =    01                01    00    03     E8        05        
+                       0        1        2        3                  4       
+  MOTOR_PACKET = PACKET_TYPE   DIR   STEPS_1    STEPS_2    MICROSECONDS_BETWEEN
+  MOTOR_PACKET =    01         00       03        E8                 05        
   MOTOR_PACKET =    0x 01010003E8050A
 
   HALT         = 0x0F
 
   PACKAGE = PACKET1 PACKET2 PACKET3 PACKET4 PACKET5
   
-  PACKAGE_EXAMPLE = 01 01 00 FF E8 01 01 02 00 FF E8 01 01 02 00 FF E8 01 01 02 00 FF E8 01 01 02 00 FF E8 01
+  PACKAGE_EXAMPLE = 01 00 03 E8 05       01 00 03 E8 05     01 00 03 E8 05     01 00 03 E8 05      01 00 03 E8 05
 */
 
 /*
@@ -81,69 +87,69 @@ struct MOTOR {
 /* Create a structure for the motors' state.
  *  direction         = the direction the motor should travel.
  *  distance          = distance left to travel.
- *  micro_between     = the delay between on-off toggle.
- *  next_toggle_index = number of delays before toggling.
+ *  step_delay     = the delay between on-off toggle.
+ *  next_step_at       = when the motor should take its next step.
  */
 struct MOTOR_STATE {
   uint8_t direction;
-  uint8_t steps;
-  uint8_t micro_between;
-  uint8_t delay_cursor;
+  uint16_t steps;
+  unsigned long step_delay;
+  unsigned long next_step_at;
   bool enabled;
 };
 
 struct BUFFER {
   uint8_t data[RX_BUFFER_SIZE];
-  uint8_t bufferSize;
+  uint8_t buffer_size;
   uint8_t index;
-  bool packetComplete;
-  uint8_t shutdownThreshold;
+  bool packet_complete;
+  uint8_t shutdown_threshold;
 };
 
 /* Initialize motors */
-MOTOR motorX = {
+MOTOR motor_x = {
       X_DIR_PIN,
       X_STEP_PIN,
       X_ENABLE_PIN,
       PULSE_WIDTH_MICROS
 };
 
-MOTOR motorY = {
+MOTOR motor_y = {
       Y_DIR_PIN,
       Y_STEP_PIN,
       Y_ENABLE_PIN,
       PULSE_WIDTH_MICROS
 };
 
-MOTOR motorZ = {
+MOTOR motor_z = {
       Z_DIR_PIN,
       Z_STEP_PIN,
       Z_ENABLE_PIN,
       PULSE_WIDTH_MICROS
 };
 
-MOTOR motorE0 = {
+MOTOR motor_e0 = {
       E0_DIR_PIN,
       E0_STEP_PIN,
       E0_ENABLE_PIN,
       PULSE_WIDTH_MICROS
 };
 
-MOTOR motorE1 = {
+MOTOR motor_e1 = {
       X_DIR_PIN,
       X_STEP_PIN,
       X_ENABLE_PIN,
       PULSE_WIDTH_MICROS
 };
 
-MOTOR_STATE motorXState = { DIR_CC, 0, 0, 0, false };
-MOTOR_STATE motorYState = { DIR_CC, 0, 0, 0, false };
-MOTOR_STATE motorZState = { DIR_CC, 0, 0, 0, false };
-MOTOR_STATE motorE0State = { DIR_CC, 0, 0, 0, false };
-MOTOR_STATE motorE1State  = { DIR_CC, 0, 0, 0, false };
+MOTOR_STATE motor_x_state = { DIR_CC, 0, 0, SENTINEL, false };
+MOTOR_STATE motor_y_state = { DIR_CC, 0, 0, SENTINEL, false };
+MOTOR_STATE motor_z_state = { DIR_CC, 0, 0, SENTINEL, false };
+MOTOR_STATE motor_e0_state = { DIR_CC, 0, 0, SENTINEL, false };
+MOTOR_STATE motor_e1_state  = { DIR_CC, 0, 0, SENTINEL, false };
 
 // All motors.
-int allMotors[] = { MOTOR_X, MOTOR_Y, MOTOR_Z, MOTOR_E0, MOTOR_E1 };
+int all_motors[] = { MOTOR_X, MOTOR_Y, MOTOR_Z, MOTOR_E0, MOTOR_E1 };
 
 // Urgent shutdown.
 volatile bool halt = false;
@@ -160,34 +166,34 @@ void setup()
   greetings();
   
   // Initialize the structures
-  motorSetup(motorX);
-  motorSetup(motorY);
-  motorSetup(motorZ);
-  motorSetup(motorE0);
-  motorSetup(motorE1);
+  motorSetup(motor_x);
+  motorSetup(motor_y);
+  motorSetup(motor_z);
+  motorSetup(motor_e0);
+  motorSetup(motor_e1);
   
   // Disable holding torque.
-  digitalWrite(motorX.enable_pin, HIGH);
-  digitalWrite(motorY.enable_pin, HIGH);
-  digitalWrite(motorZ.enable_pin, HIGH);
-  digitalWrite(motorE0.enable_pin, HIGH);
-  digitalWrite(motorE1.enable_pin, HIGH);
+  digitalWrite(motor_x.enable_pin, HIGH);
+  digitalWrite(motor_y.enable_pin, HIGH);
+  digitalWrite(motor_z.enable_pin, HIGH);
+  digitalWrite(motor_e0.enable_pin, HIGH);
+  digitalWrite(motor_e1.enable_pin, HIGH);
   
-  rxBuffer.bufferSize = RX_BUFFER_SIZE;
+  rxBuffer.buffer_size = RX_BUFFER_SIZE;
 }
 
 /* Main */
 void loop()
 {
-  if (rxBuffer.packetComplete) {
-    // If packet is packetComplete
+  if (rxBuffer.packet_complete) {
+    // If packet is packet_complete
     handleCompletePacket(rxBuffer);
     // Clear the buffer for the next packet.
     resetBuffer(&rxBuffer);
   }
   
   // Start the motor
-  writeMotor();
+  pollMotor();
 }
 
 /*  ############### PACKETS ###############
@@ -197,7 +203,7 @@ void handleCompletePacket(BUFFER rxBuffer) {
     
     int packetProcessingIndex = 0;
     
-    for (int i = 0; i < RX_BUFFER_SIZE; i+=PACKET_LENGTH)
+    for (int i = 0; i < PACKAGE_SIZE; i+=PACKET_LENGTH)
     {
       uint8_t packet_type = rxBuffer.data[0];
       
@@ -205,16 +211,16 @@ void handleCompletePacket(BUFFER rxBuffer) {
         case DRIVE_CMD:
 
             // Unpack the command.
-            uint8_t motorNumber =  rxBuffer.data[i+1];
-            uint8_t direction =  rxBuffer.data[i+2];
-            uint16_t steps = ((uint8_t)rxBuffer.data[i+3] << 8)  | (uint8_t)rxBuffer.data[i+4];
-            uint8_t microSecondsDelay = rxBuffer.data[i+5];
-            
+            uint8_t motorNumber =  uint8_t(i / PACKET_LENGTH);
+            uint8_t direction =  rxBuffer.data[i+1];
+            uint16_t steps = ((uint8_t)rxBuffer.data[i+2] << 8)  | (uint8_t)rxBuffer.data[i+3];
+            unsigned long microSecondsDelay = rxBuffer.data[i+4];
+
+            if (microSecondsDelay < MINIMUM_STEPPER_DELAY) { microSecondsDelay = MINIMUM_STEPPER_DELAY; }
+
             // Should we move this motor.
             if (steps > 0) {
               // Set motor state.
-              Serial.print("Motor number #");
-              Serial.println(motorNumber);
               setMotorState(motorNumber, direction, steps, microSecondsDelay);
             }
             
@@ -237,19 +243,19 @@ MOTOR getMotor(uint8_t motorNumber) {
   switch (motorNumber)
   {
     case MOTOR_X:
-      return motorX;
+      return motor_x;
       break;
     case MOTOR_Y:
-      return motorY;
+      return motor_y;
       break;
     case MOTOR_Z:
-      return motorZ;
+      return motor_z;
       break;
     case MOTOR_E0:
-      return motorE0;
+      return motor_e0;
       break;
     case MOTOR_E1:
-      return motorE0;
+      return motor_e0;
       break;
     default:
       break;
@@ -260,42 +266,54 @@ MOTOR_STATE* getMotorState(uint8_t motorNumber) {
   switch (motorNumber)
   {
     case MOTOR_X:
-      return &motorXState;
+      return &motor_x_state;
       break;
     case MOTOR_Y:
-      return &motorYState;
+      return &motor_y_state;
       break;
     case MOTOR_Z:
-      return &motorZState;
+      return &motor_z_state;
       break;
     case MOTOR_E0:
-      return &motorE0State;
+      return &motor_e0_state;
       break;
     case MOTOR_E1:
-      return &motorE0State;
+      return &motor_e1_state;
       break;
     default:
+      Serial.println("No motor state found.");
       break;
   }
 }
 
-void setMotorState(uint8_t motorNumber, uint8_t direction, uint16_t steps, uint8_t microSecondsDelay) {
+void setMotorState(uint8_t motorNumber, uint8_t direction, uint16_t steps, unsigned long microSecondsDelay) {
 
     // Get reference to motor state.
     MOTOR_STATE* motorState = getMotorState(motorNumber);
 
+    if( DEBUG ) {
+      Serial.print("Motor number #");
+      Serial.println(motorNumber);
+      Serial.print("direction:");
+      Serial.println(direction);
+      Serial.print("steps:");
+      Serial.println(steps);
+      Serial.print("microSecondsDelay:");
+      Serial.println(microSecondsDelay);
+    }
+
     // Update with target states.
     motorState->direction = direction;
     motorState->steps = steps;
-    motorState->micro_between = microSecondsDelay;
-    motorState->delay_cursor = 0;
+    motorState->step_delay = microSecondsDelay;
+    motorState->next_step_at = micros() + microSecondsDelay;
 }
 
 void resetMotorState(MOTOR_STATE* motorState){
   motorState->direction = DIR_CC;
   motorState->steps = 0;
-  motorState->micro_between = 0;
-  motorState->delay_cursor = 0;
+  motorState->step_delay = 0;
+  motorState->next_step_at = SENTINEL;
   motorState->enabled = false;
 }
 
@@ -309,19 +327,26 @@ void motorSetup(MOTOR motor) {
 }
 
 /* Write to MOTOR */
-void writeMotor() {
+void pollMotor() {
+
+    unsigned long current_micros = micros();
 
     // Loop over all motors.
-    for (int i = 0; i < int(sizeof(allMotors)/sizeof(int)); i++)
+    for (int i = 0; i < int(sizeof(all_motors)/sizeof(int)); i++)
     {
 
       // Get motor and motorState for this motor.
-      MOTOR motor = getMotor(allMotors[i]);
-      MOTOR_STATE* motorState = getMotorState(allMotors[i]);
-
+      MOTOR motor = getMotor(all_motors[i]);
+      MOTOR_STATE* motorState = getMotorState(all_motors[i]);
+      
       // Check if motor needs to move.
       if (motorState->steps > 0) {
-        
+
+        // Initial step timer.
+        if (motorState->next_step_at == SENTINEL) {
+          motorState->next_step_at = micros() + motorState->step_delay;
+        }
+
         // Enable motor.
         if (motorState->enabled == false) {
           enableMotor(motor, motorState);
@@ -330,17 +355,15 @@ void writeMotor() {
         // Set motor direction.
         setDirection(motor, motorState->direction);
 
-        // If delay expired, write step.
-        if (motorState->delay_cursor > motorState->micro_between) {
-            // Reset motor's delay.
-            motorState->delay_cursor = 0;
+        unsigned long window = motorState->step_delay;  // we should be within this time frame
+
+        if(current_micros - motorState->next_step_at < window) {         
             writeMotor(motor);
             motorState->steps -= 1;
-        }        
+            motorState->next_step_at += motorState->step_delay;
+            // Serial.println(motorState->steps);
+        }
       }
-
-      // Update delay cursor.
-      motorState->delay_cursor += 1;
 
       // If steps are finished, disable motor and reset state.
       if (motorState->steps == 0 && motorState->enabled == true ) {
@@ -349,9 +372,6 @@ void writeMotor() {
         resetMotorState(motorState);
       }
     }
-
-    // Delay for all motors.
-    delayMicroseconds(1);
 }
 
 void writeMotor(MOTOR motor) {
@@ -405,7 +425,7 @@ void serialEvent() {
     rxBuffer.index++;
 
     if (rxBuffer.index == PACKAGE_SIZE) {
-      rxBuffer.packetComplete = true;
+      rxBuffer.packet_complete = true;
     }
   }
 }
@@ -414,12 +434,12 @@ void serialEvent() {
 void resetBuffer(struct BUFFER *buffer) {
   memset(buffer->data, 0, sizeof(buffer->data));
   buffer->index = 0;
-  buffer->packetComplete = false;
+  buffer->packet_complete = false;
 }
 
 // Does not count termination char.
 int packetLength(BUFFER buffer){
-  for(int i = 0; i < buffer.bufferSize; i++) {
+  for(int i = 0; i < buffer.buffer_size; i++) {
     if((char)buffer.data[i] == '\n'){ return i; }
   }
   return -1;
