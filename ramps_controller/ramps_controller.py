@@ -9,12 +9,12 @@ from time import sleep, time
 
 
 """
-  MOTOR_NUM:
+   MOTOR_NUM:
       X     = 0
       Y     = 1
       Z     = 2
-      E1    = 3
-      E2    = 4
+      E0    = 3
+      E1    = 4
       
   PACKET_TYPES
       0x01 = motor_write
@@ -25,9 +25,30 @@ from time import sleep, time
       0x01 = CCW
 
   MOTOR MOVE PROTOCOL:
-                       0               1     2     3        4       5         6
-  MOTOR_PACKET = PACKET_TYPE_CHAR MOTOR_NUM DIR STEPS_1 STEPS_2 MILLI_BETWEEN \n
+                       0        1        2        3                  4       
+  MOTOR_PACKET = PACKET_TYPE   DIR   STEPS_1    STEPS_2    MICROSECONDS_BETWEEN
+  MOTOR_PACKET =    01         00       03        E8                 05        
+  MOTOR_PACKET =    0x 01010003E8050A
 
+  HALT         = 0x0F
+
+  PACKAGE = PACKET1 PACKET2 PACKET3 PACKET4 PACKET5
+  
+  PACKAGE_EXAMPLE = 01 00 03 E8 05       01 00 03 E8 05     01 00 03 E8 05     01 00 03 E8 05      01 00 03 E8 05
+
+                          0         1         2     0
+  COMPLETED_PACKET = PACKET_TYPE SUCCESS MOTOR_NUM \n
+                         0x01               
+  PACKET_TYPES:
+    MOTOR_FINISHED = 0x01
+
+  SUCCESS_TYPES:
+    SUCCESS = 0x06
+    FAIL    = 0x15
+
+  Types not motor related, MOTOR_NUM = 0.
+
+    01 01 00 FF E8 01 01 02 00 FF E8 01 01 02 00 FF E8 01 01 02 00 FF E8 01 01 02 00 FF E8 01
 """
 
 class RAMPS:
