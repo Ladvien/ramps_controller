@@ -186,6 +186,7 @@ class RAMPS:
         # Don't miss ACK to being in a hurry.
         sleep(self.serial_delay)
         confirmation = self.read_available()
+        print(confirmation)
         if confirmation[0] == self.ACKNOWLEDGE:
             self.print_debug(f'Move command acknowledged.')
         
