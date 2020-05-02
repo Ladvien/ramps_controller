@@ -7,6 +7,7 @@ setup(name='ramps_controller',
       author='C. Thomas Brittain',
       author_email='cthomasbrittain@hotmail.com',
       license='MIT',
-      packages=['ramps_controller'],
+      packages=['ramps_controller', 'serial_util'],
+      install_requires=['pyserial'],
       zip_safe=False
 )
