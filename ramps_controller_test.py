@@ -39,7 +39,7 @@ motor_packet_e1 = [ramps.DRIVE_CMD, ramps.DIR_CC, 0xFF, 0xFF, 0x05]
 motor_packet_e2 = [ramps.DRIVE_CMD, ramps.DIR_CC, 0xFF, 0xFF, 0x05]
 
 test_package = bytearray(motor_packet_x +  motor_packet_y + motor_packet_z + motor_packet_e1 + motor_packet_e2)
-print(test_packet)
+print(test_package)
 ser.write(test_package)
 read_available(ser)
 
@@ -64,6 +64,6 @@ motor_packet_e1 = [ramps.DRIVE_CMD, ramps.DIR_CC, 0xFF, 0xFF, 0x05]
 motor_packet_e2 = [ramps.DRIVE_CMD, ramps.DIR_CC, 0xFF, 0xFF, 0x05]
 
 test_package = bytearray(motor_packet_x +  motor_packet_y + motor_packet_z + motor_packet_e1 + motor_packet_e2)
-print(test_packet)
+print(test_package)
 ser.write(test_package)
 read_available(ser)
