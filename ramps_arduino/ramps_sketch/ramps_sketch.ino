@@ -209,7 +209,7 @@ void handleCompletePacket(BUFFER rxBuffer) {
           // Unpack the command.
           uint8_t motorNumber =  rxBuffer.data[1];
           uint8_t direction =  rxBuffer.data[2];
-          uint16_t steps = ((uint8_t)rxBuffer.data[3] << 8)  | (uint8_t)rxBuffer.data[4];
+          uint16_t steps = ((uint8_t)rxBuffer.data[3] << 6)  | (uint8_t)rxBuffer.data[4];
           unsigned long microSecondsDelay = rxBuffer.data[5] * 1000; // Delay comes in as milliseconds.
 
           if (microSecondsDelay < MINIMUM_STEPPER_DELAY) { microSecondsDelay = MINIMUM_STEPPER_DELAY; }
@@ -408,11 +408,11 @@ void setDirection(MOTOR motor, uint8_t direction) {
 /*  ############### COMMUNICATION ###############
  * 
 */
-void decodePacket(uint8_t value) {
+uint8_t decodePacket(uint8_t value) {
   return (value >> 2) &~ 0xC0;
 }
 
-void encodePacket(uint8_t value) {
+uint8_t encodePacket(uint8_t value) {
   return (value << 2) | 0x03;
 }
 
@@ -424,12 +424,15 @@ void serialEvent() {
     // Read a byte
     uint8_t inByte = (uint8_t)Serial.read();
 
-    // Store the byte in the buffer.
-    rxBuffer.data[rxBuffer.index] = inByte;
-    rxBuffer.index++;
+
 
     if (inByte == END_TX) {
       rxBuffer.packet_complete = true;
+    } else {
+      // Store the byte in the buffer.
+      inByte = decodePacket(inByte);
+      rxBuffer.data[rxBuffer.index] = inByte;
+      rxBuffer.index++;
     }
   }
 }
@@ -482,6 +485,8 @@ void greetings() {
   Serial.println("Packet: MOTOR_PACKET = PACKET_TYPE_CHAR MOTOR_NUM DIR STEPS_1 STEPS_2 MILLI_BETWEEN 0x04");
   Serial.println("Encode: VALUE = (VALUE << 2) | 0x03");
   Serial.println("Decode: VALUE = (VALUE >> 2) &~ 0xC0");
+  Serial.println("Pre-encoded value : 01 00 01 3F 3F 05 04");
+  Serial.println("Post-encoded value: 07 03 07 FF FF 17 04");
 }
 // END COMMUNICATION
 
