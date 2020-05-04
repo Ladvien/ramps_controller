@@ -84,3 +84,10 @@ def read_available(ser, as_ascii = True):
             incoming_data += ser.readline()
 
     print(incoming_data)
+
+def encode(value):
+    return (value << 2) | 0x03
+
+def decode(value):
+    return (value >> 2) &~ 0xC0
+
