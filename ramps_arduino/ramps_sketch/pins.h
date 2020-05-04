@@ -51,6 +51,6 @@
 #define DIR_CCW         (char)0x01
 
 #define COMPLETED_CMD   (char)0x07
-#define END_TX          (char)0x0A
+#define END_TX          (char)0x04
 #define ACK             (char)0x06 // Acknowledge
 #define NACK            (char)0x15 // Negative Acknowledge

@@ -15,7 +15,7 @@
 // TODO: Add a "holding torque" feature; making it so motors never disable.
 
 // Output debug info?
-#define DEBUG                 false
+#define DEBUG                 true
 
 // Determine the pulse width of motor.
 #define MOTOR_ANGLE           1.8
@@ -23,7 +23,7 @@
 #define NUM_MOTORS            5
 #define PACKET_LENGTH         5
 #define RX_BUFFER_SIZE        NUM_MOTORS * PACKET_LENGTH
-#define PACKAGE_SIZE          NUM_MOTORS * PACKET_LENGTH
+#define PACKET_SIZE           5
 #define STEP_WINDOW           10 // Number of microsecond variance allowed per step.
 #define SENTINEL              0
 #define MINIMUM_STEPPER_DELAY 2000
@@ -201,37 +201,33 @@ void loop()
 */
 void handleCompletePacket(BUFFER rxBuffer) {
     
-    int packetProcessingIndex = 0;
-    
-    for (int i = 0; i < PACKAGE_SIZE; i+=PACKET_LENGTH)
-    {
-      uint8_t packet_type = rxBuffer.data[0];
+    uint8_t packet_type = rxBuffer.data[0];
       
-      switch (packet_type) {
-        case DRIVE_CMD:
+    switch (packet_type) {
+      case DRIVE_CMD:
 
-            // Unpack the command.
-            uint8_t motorNumber =  uint8_t(i / PACKET_LENGTH);
-            uint8_t direction =  rxBuffer.data[i+1];
-            uint16_t steps = ((uint8_t)rxBuffer.data[i+2] << 8)  | (uint8_t)rxBuffer.data[i+3];
-            unsigned long microSecondsDelay = rxBuffer.data[i+4];
+          // Unpack the command.
+          uint8_t motorNumber =  rxBuffer.data[1];
+          uint8_t direction =  rxBuffer.data[2];
+          uint16_t steps = ((uint8_t)rxBuffer.data[3] << 8)  | (uint8_t)rxBuffer.data[4];
+          unsigned long microSecondsDelay = rxBuffer.data[5] * 1000; // Delay comes in as milliseconds.
 
-            if (microSecondsDelay < MINIMUM_STEPPER_DELAY) { microSecondsDelay = MINIMUM_STEPPER_DELAY; }
+          if (microSecondsDelay < MINIMUM_STEPPER_DELAY) { microSecondsDelay = MINIMUM_STEPPER_DELAY; }
 
-            // Should we move this motor.
-            if (steps > 0) {
-              // Set motor state.
-              setMotorState(motorNumber, direction, steps, microSecondsDelay);
-            }
-            
-            // Let the master know command is in process.
-            sendAck();
-          break;
-        default:
-          sendNack();
-          break;
-      }
+          // Should we move this motor.
+          if (steps > 0) {
+            // Set motor state.
+            setMotorState(motorNumber, direction, steps, microSecondsDelay);
+          }
+          
+          // Let the master know command is in process.
+          sendAck();
+        break;
+      default:
+        sendNack();
+        break;
     }
+    
 }
 
 
@@ -412,6 +408,14 @@ void setDirection(MOTOR motor, uint8_t direction) {
 /*  ############### COMMUNICATION ###############
  * 
 */
+void decodePacket(uint8_t value) {
+  return (value >> 2) &~ 0xC0;
+}
+
+void encodePacket(uint8_t value) {
+  return (value << 2) | 0x03;
+}
+
 void serialEvent() {
 
   // Get all the data.
@@ -424,7 +428,7 @@ void serialEvent() {
     rxBuffer.data[rxBuffer.index] = inByte;
     rxBuffer.index++;
 
-    if (rxBuffer.index == PACKAGE_SIZE) {
+    if (inByte == END_TX) {
       rxBuffer.packet_complete = true;
     }
   }
@@ -474,6 +478,10 @@ boolean checkForHalt() {
 void greetings() {
   Serial.println("RAMPs 1.4 stepper driver.");
   Serial.println("Welcome!");
+  Serial.println("Protocol reserves first two bits for flow control. ");
+  Serial.println("Packet: MOTOR_PACKET = PACKET_TYPE_CHAR MOTOR_NUM DIR STEPS_1 STEPS_2 MILLI_BETWEEN 0x04");
+  Serial.println("Encode: VALUE = (VALUE << 2) | 0x03");
+  Serial.println("Decode: VALUE = (VALUE >> 2) &~ 0xC0");
 }
 // END COMMUNICATION
 
