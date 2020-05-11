@@ -39,11 +39,11 @@
 #define TEMP_0_PIN         13   // ANALOG NUMBERING
 #define TEMP_1_PIN         14   // ANALOG NUMBERING
 
-#define MOTOR_X         0x00
-#define MOTOR_Y         0x01
-#define MOTOR_Z         0x02
-#define MOTOR_E0        0x03
-#define MOTOR_E1        0x04
+#define MOTOR_X         0x01
+#define MOTOR_Y         0x02
+#define MOTOR_Z         0x03
+#define MOTOR_E0        0x04
+#define MOTOR_E1        0x05
 
 #define DRIVE_CMD       (char)0x01
 #define HALT_CMD        (char)0x0F
@@ -51,6 +51,8 @@
 #define DIR_CCW         (char)0x01
 
 #define COMPLETED_CMD   (char)0x07
-#define END_TX          (char)0x04
 #define ACK             (char)0x06 // Acknowledge
 #define NACK            (char)0x15 // Negative Acknowledge
+
+// RESERVED
+#define END_TX          (char)0x03
