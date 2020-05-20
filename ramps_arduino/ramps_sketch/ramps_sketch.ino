@@ -482,11 +482,11 @@ void greetings() {
   Serial.println("RAMPs 1.4 stepper driver.");
   Serial.println("Welcome!");
   Serial.println("Protocol reserves first two bits for flow control. ");
-  Serial.println("Packet: MOTOR_PACKET = PACKET_TYPE_CHAR MOTOR_NUM DIR STEPS_1 STEPS_2 MILLI_BETWEEN 0x04");
+  Serial.println("Packet: MOTOR_PACKET = PACKET_TYPE_CHAR MOTOR_NUM DIR STEPS_1 STEPS_2 MILLI_BETWEEN 0x03");
   Serial.println("Encode: VALUE = (VALUE << 2) | 0x03");
   Serial.println("Decode: VALUE = (VALUE >> 2) &~ 0xC0");
-  Serial.println("Pre-encoded value : 01 00 01 3F 3F 05 04");
-  Serial.println("Post-encoded value: 07 03 07 FF FF 17 04");
+  Serial.println("Pre-encoded value : 01 01 01 3F 3F 05 03");
+  Serial.println("Post-encoded value: 04 04 04 FC FC 14 03");
 }
 // END COMMUNICATION
 
