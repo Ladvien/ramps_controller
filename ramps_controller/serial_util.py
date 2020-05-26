@@ -91,3 +91,9 @@ def encode(value):
 def decode(value):
     return (value >> 2) &~ 0xC0
 
+def reset_on_dtr(ser):
+    ser.setDTR(False)
+    sleep(0.4)
+    ser.setDTR(True)
+    sleep(2)   
+        
